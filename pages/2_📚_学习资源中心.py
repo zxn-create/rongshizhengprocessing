@@ -6,8 +6,9 @@ import io
 import base64
 import pandas as pd
 from datetime import datetime
-import webbrowser  # 新增：用于打开外部链接
+import webbrowser  # 保留导入，但使用新的实现方式
 import matplotlib.pyplot as plt
+
 # 页面配置
 st.set_page_config(
     page_title="学习资源中心",
@@ -18,7 +19,6 @@ st.set_page_config(
 
 # 目标链接（统一配置）
 TARGET_URL = "https://www.yuketang.cn/"
-
 
 # 现代化米色思政主题CSS
 def apply_modern_css():
@@ -361,8 +361,36 @@ def get_image_download_link(img, filename, text):
     href = f'<a href="data:image/jpeg;base64,{img_str}" download="{filename}" style="background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; padding: 10px 20px; border-radius: 5px; text-decoration: none; display: inline-block; margin-top: 10px;">{text}</a>'
     return href
 
+# 新的链接打开函数 - 使用HTML方式
+def create_link_button(url, text, key=None):
+    """创建HTML链接按钮"""
+    button_html = f'''
+    <a href="{url}" target="_blank" style="
+        display: inline-block;
+        width: 100%;
+        background: linear-gradient(135deg, #ffffff, #fef2f2);
+        color: #dc2626;
+        border: 2px solid #dc2626;
+        padding: 14px 28px;
+        border-radius: 50px;
+        font-weight: 600;
+        box-shadow: 0 4px 15px rgba(220, 38, 38, 0.2);
+        transition: all 0.3s ease;
+        font-size: 1rem;
+        letter-spacing: 0.5px;
+        text-decoration: none;
+        text-align: center;
+        cursor: pointer;
+        margin: 5px 0;
+    " onmouseover="this.style.background='linear-gradient(135deg, #dc2626, #b91c1c)'; this.style.color='white'; this.style.transform='translateY(-3px)'; this.style.boxShadow='0 8px 25px rgba(220, 38, 38, 0.4)';" 
+    onmouseout="this.style.background='linear-gradient(135deg, #ffffff, #fef2f2)'; this.style.color='#dc2626'; this.style.transform='translateY(0px)'; this.style.boxShadow='0 4px 15px rgba(220, 38, 38, 0.2)';">
+        {text}
+    </a>
+    '''
+    return button_html
 
-# 渲染侧边栏（关键修改：所有思政理论学习按钮链接到目标网站）
+
+# 渲染侧边栏（修改链接打开方式）
 def render_sidebar():
     with st.sidebar:
         st.markdown("""
@@ -401,18 +429,19 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # 思政理论学习（关键修改：点击按钮打开目标链接）
+        # 思政理论学习（修改为HTML链接方式）
         st.markdown("### 🎯 思政理论学习")
-        theory_topics = [
-            "图像处理中的工匠精神",
-            "科技创新与国家发展",
-            "技术伦理与社会责任",
-            "科学家精神传承"
+        
+        theory_links = [
+            ("图像处理中的工匠精神", "https://www.sxjrzyxy.edu.cn/Article.aspx?ID=33094&Mid=869"),
+            ("科技创新与国家发展", "https://www.bilibili.com/video/BV13K4y1a7Xv/"),
+            ("技术伦理与社会责任", "https://www.bilibili.com/video/BV18T4y137Ku/"),
+            ("科学家精神传承", "https://www.bilibili.com/video/BV13DVgzKEoz/")
         ]
-
-        for topic in theory_topics:
-            if st.button(f"📖 {topic}", key=f"theory_{topic}", use_container_width=True):
-                webbrowser.open_new_tab(TARGET_URL)  # 打开目标网站（新窗口）
+        
+        for topic, url in theory_links:
+            button_html = create_link_button(url, f"📖 {topic}")
+            st.markdown(button_html, unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -455,7 +484,7 @@ def render_sidebar():
         st.text("版本: v2.1.0")
 
 
-# 主页面内容（关键修改：所有功能按钮链接到目标网站）
+# 主页面内容（修改链接打开方式）
 def main():
     # 应用CSS样式
     apply_modern_css()
@@ -498,9 +527,12 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 关键修改：点击打开目标网站
-                if st.button("开始学习", key="study_1", use_container_width=True):
-                    webbrowser.open_new_tab("https://www.sxjrzyxy.edu.cn/Article.aspx?ID=33094&Mid=869")
+                # 修改为HTML链接方式
+                button_html = create_link_button(
+                    "https://www.sxjrzyxy.edu.cn/Article.aspx?ID=33094&Mid=869", 
+                    "开始学习"
+                )
+                st.markdown(button_html, unsafe_allow_html=True)
 
         with col2:
             with st.container():
@@ -521,9 +553,12 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 关键修改：点击打开目标网站
-                if st.button("开始学习", key="study_2", use_container_width=True):
-                    webbrowser.open_new_tab("https://www.bilibili.com/video/BV13K4y1a7Xv/?spm_id_from=333.337.search-card.all.click&vd_source=71eee32e814e5fb540d5617b1c886c17")
+                # 修改为HTML链接方式
+                button_html = create_link_button(
+                    "https://www.bilibili.com/video/BV13K4y1a7Xv/", 
+                    "开始学习"
+                )
+                st.markdown(button_html, unsafe_allow_html=True)
 
         col3, col4 = st.columns(2)
 
@@ -539,9 +574,12 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            # 关键修改：点击打开目标网站
-            if st.button("观看视频", key="video_1", use_container_width=True):
-                webbrowser.open_new_tab("https://www.bilibili.com/video/BV13DVgzKEoz/?spm_id_from=333.337.search-card.all.click&vd_source=71eee32e814e5fb540d5617b1c886c17")
+            # 修改为HTML链接方式
+            button_html = create_link_button(
+                "https://www.bilibili.com/video/BV13DVgzKEoz/", 
+                "观看视频"
+            )
+            st.markdown(button_html, unsafe_allow_html=True)
 
         with col4:
             st.markdown("""
@@ -555,9 +593,12 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            # 关键修改：点击打开目标网站
-            if st.button("观看视频", key="video_2", use_container_width=True):
-                webbrowser.open_new_tab("https://www.bilibili.com/video/BV18T4y137Ku/?spm_id_from=333.337.search-card.all.click&vd_source=71eee32e814e5fb540d5617b1c886c17")
+            # 修改为HTML链接方式
+            button_html = create_link_button(
+                "https://www.bilibili.com/video/BV18T4y137Ku/", 
+                "观看视频"
+            )
+            st.markdown(button_html, unsafe_allow_html=True)
 
     with tab2:
         st.markdown('<div class="section-title">🔬 技术学习资源</div>', unsafe_allow_html=True)
@@ -583,9 +624,12 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 关键修改：点击打开目标网站
-                if st.button("查看文档", key="doc_1", use_container_width=True):
-                    webbrowser.open_new_tab("https://woshicver.com/")
+                # 修改为HTML链接方式
+                button_html = create_link_button(
+                    "https://woshicver.com/", 
+                    "查看文档"
+                )
+                st.markdown(button_html, unsafe_allow_html=True)
 
         with col2:
             with st.container():
@@ -606,12 +650,14 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 关键修改：点击打开目标网站
-                if st.button("开始学习", key="study_3", use_container_width=True):
-                    webbrowser.open_new_tab("https://www.bilibili.com/video/BV1Fo4y1d7JL/?spm_id_from=333.337.search-card.all.click&vd_source=71eee32e814e5fb540d5617b1c886c17")
+                # 修改为HTML链接方式
+                button_html = create_link_button(
+                    "https://www.bilibili.com/video/BV1Fo4y1d7JL/", 
+                    "开始学习"
+                )
+                st.markdown(button_html, unsafe_allow_html=True)
 
         # 理论知识部分（保持不变）
-
         with st.expander("第1章 绪论", expanded=True):
             st.markdown("""
             **1.1 图像的基本概念**
@@ -812,11 +858,10 @@ def main():
             - 渐进式编码模式
             """)
 
-
     with tab3:
         st.markdown('<div class="section-title">🛠️ 在线实践工具</div>', unsafe_allow_html=True)
 
-        # 边缘检测工具
+        # 边缘检测工具（保持不变）
         with st.expander("🔍 边缘检测工具", expanded=True):
             col1, col2 = st.columns(2)
 
@@ -854,7 +899,7 @@ def main():
                 else:
                     st.info("👆 请上传图像并点击处理按钮")
 
-        # 图像滤波工具
+        # 图像滤波工具（保持不变）
         with st.expander("🔄 图像滤波工具"):
             col1, col2 = st.columns(2)
 
@@ -891,6 +936,7 @@ def main():
                     ), unsafe_allow_html=True)
                 else:
                     st.info("👆 请上传图像并点击处理按钮")
+
     with tab4:
         st.markdown('<div class="section-title">💾 学习资源下载</div>', unsafe_allow_html=True)
 
@@ -909,9 +955,9 @@ def main():
             """, unsafe_allow_html=True)
 
             resources = [
-                {"name": "《数字图像处理（第三版）》- Gonzalez", "format": "PDF", "size": "15.2MB"},
-                {"name": "《OpenCV入门到精通》- 中文教程", "format": "PDF+代码", "size": "8.7MB"},
-                {"name": "《计算机视觉：算法与应用》", "format": "课件", "size": "12.3MB"}
+                {"name": "《数字图像处理（第三版）》- Gonzalez", "format": "PDF", "size": "15.2MB", "url": "https://wenku.so.com/s?q=%E6%95%B0%E5%AD%97%E5%9B%BE%E5%83%8F%E5%A4%84%E7%90%86(%E7%AC%AC%E4%B8%89%E7%89%88)"},
+                {"name": "《OpenCV入门到精通》- 中文教程", "format": "PDF+代码", "size": "8.7MB", "url": "https://github.com/search?q=OpenCV"},
+                {"name": "《计算机视觉：算法与应用》", "format": "课件", "size": "12.3MB", "url": "https://www.scidb.cn/s/mqABbi"}
             ]
 
             for resource in resources:
@@ -921,9 +967,9 @@ def main():
                         st.write(f"**{resource['name']}**")
                         st.caption(f"{resource['format']} · {resource['size']}")
                     with col_b:
-                        # 关键修改：点击打开目标网站
-                        if st.button("下载", key=f"dl_{resource['name']}"):
-                            webbrowser.open_new_tab("https://wenku.so.com/s?q=%E6%95%B0%E5%AD%97%E5%9B%BE%E5%83%8F%E5%A4%84%E7%90%86(%E7%AC%AC%E4%B8%89%E7%89%88)&src=ob_zz_juhe360wenku")
+                        # 修改为HTML链接方式
+                        button_html = create_link_button(resource['url'], "下载")
+                        st.markdown(button_html, unsafe_allow_html=True)
 
         with col2:
             st.markdown("""
@@ -938,9 +984,9 @@ def main():
             """, unsafe_allow_html=True)
 
             datasets = [
-                {"name": "标准测试图像集（50张）", "format": "JPG", "size": "25.1MB"},
-                {"name": "医学影像数据集", "format": "DICOM", "size": "156.8MB"},
-                {"name": "自然场景图像库", "format": "JPG+标注", "size": "89.3MB"}
+                {"name": "标准测试图像集（50张）", "format": "JPG", "size": "25.1MB", "url": "https://www.scidb.cn/s/mqABbi"},
+                {"name": "医学影像数据集", "format": "DICOM", "size": "156.8MB", "url": "https://www.scidb.cn/s/mqABbi"},
+                {"name": "自然场景图像库", "format": "JPG+标注", "size": "89.3MB", "url": "https://www.scidb.cn/s/mqABbi"}
             ]
 
             for dataset in datasets:
@@ -950,9 +996,9 @@ def main():
                         st.write(f"**{dataset['name']}**")
                         st.caption(f"{dataset['format']} · {dataset['size']}")
                     with col_b:
-                        # 关键修改：点击打开目标网站
-                        if st.button("下载", key=f"ds_{dataset['name']}"):
-                            webbrowser.open_new_tab("https://www.scidb.cn/s/mqABbi")
+                        # 修改为HTML链接方式
+                        button_html = create_link_button(dataset['url'], "下载")
+                        st.markdown(button_html, unsafe_allow_html=True)
 
         # 代码资源
         st.markdown("""
@@ -967,9 +1013,9 @@ def main():
         """, unsafe_allow_html=True)
 
         code_resources = [
-            {"name": "图像处理算法库（Python）", "language": "Python", "size": "4.2MB"},
-            {"name": "OpenCV实战项目", "language": "C++/Python", "size": "7.8MB"},
-            {"name": "MATLAB图像处理工具箱", "language": "MATLAB", "size": "3.5MB"}
+            {"name": "图像处理算法库（Python）", "language": "Python", "size": "4.2MB", "url": "https://github.com/search?q=OpenCV"},
+            {"name": "OpenCV实战项目", "language": "C++/Python", "size": "7.8MB", "url": "https://github.com/search?q=OpenCV"},
+            {"name": "MATLAB图像处理工具箱", "language": "MATLAB", "size": "3.5MB", "url": "https://github.com/search?q=OpenCV"}
         ]
 
         for code in code_resources:
@@ -980,9 +1026,9 @@ def main():
                 with col_b:
                     st.caption(f"语言: {code['language']}")
                 with col_c:
-                    # 关键修改：点击打开目标网站
-                    if st.button("下载", key=f"code_{code['name']}"):
-                        webbrowser.open_new_tab("https://github.com/search?q=OpenCV&type=repositories")
+                    # 修改为HTML链接方式
+                    button_html = create_link_button(code['url'], "下载")
+                    st.markdown(button_html, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
