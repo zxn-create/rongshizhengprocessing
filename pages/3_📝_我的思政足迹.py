@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import sqlite3
+import pytz  # 新增：用于时区处理
 
 st.set_page_config(
     page_title="我的思政足迹", 
@@ -12,6 +13,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 获取北京时间
+def get_beijing_time():
+    """获取北京时间"""
+    beijing_tz = pytz.timezone('Asia/Shanghai')
+    return datetime.now(beijing_tz)
 
 # 现代化米色思政主题CSS
 def apply_modern_css():
@@ -268,6 +275,30 @@ def get_db_connection():
     """获取数据库连接"""
     return sqlite3.connect('image_processing_platform.db')
 
+def init_database():
+    """初始化数据库表"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 创建思政感悟表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ideology_reflections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_username TEXT NOT NULL,
+            reflection_content TEXT NOT NULL,
+            submission_time TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            teacher_feedback TEXT DEFAULT '',
+            score INTEGER DEFAULT 0,
+            word_count INTEGER DEFAULT 0,
+            allow_view_score BOOLEAN DEFAULT TRUE,
+            FOREIGN KEY (student_username) REFERENCES users (username)
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+
 def get_ideology_reflections(student_username=None):
     """获取思政感悟记录"""
     conn = get_db_connection()
@@ -315,7 +346,8 @@ def add_ideology_reflection(student_username, reflection_content):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    submission_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 使用北京时间
+    submission_time = get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')
     word_count = len(reflection_content.strip())
     
     cursor.execute("""
@@ -352,23 +384,28 @@ def delete_reflection(reflection_id):
     conn.close()
 
 def get_student_stats(student_username):
-    """获取学生统计数据"""
+    """获取学生统计数据 - 修复版"""
     reflections = get_ideology_reflections(student_username)
     
     total_reflections = len(reflections)
     pending_count = len([r for r in reflections if r['status'] == 'pending'])
     reviewed_count = len([r for r in reflections if r['status'] == 'reviewed'])
-    avg_score = np.mean([r['score'] for r in reflections if r['score'] > 0]) if any(r['score'] > 0 for r in reflections) else 0
+    returned_count = len([r for r in reflections if r['status'] == 'returned'])
+    
+    # 计算平均分，只计算已评分且分数大于0的记录
+    scored_reflections = [r for r in reflections if r['score'] > 0]
+    avg_score = np.mean([r['score'] for r in scored_reflections]) if scored_reflections else 0
     
     return {
         'total_reflections': total_reflections,
         'pending_count': pending_count,
         'reviewed_count': reviewed_count,
+        'returned_count': returned_count,
         'avg_score': round(avg_score, 1)
     }
 
 def get_class_stats():
-    """获取班级统计数据"""
+    """获取班级统计数据 - 修复版"""
     all_reflections = get_ideology_reflections()
     all_students = get_all_students()
     
@@ -376,7 +413,11 @@ def get_class_stats():
     total_students = len(all_students)
     pending_count = len([r for r in all_reflections if r['status'] == 'pending'])
     reviewed_count = len([r for r in all_reflections if r['status'] == 'reviewed'])
-    avg_score = np.mean([r['score'] for r in all_reflections if r['score'] > 0]) if any(r['score'] > 0 for r in all_reflections) else 0
+    returned_count = len([r for r in all_reflections if r['status'] == 'returned'])
+    
+    # 计算平均分，只计算已评分且分数大于0的记录
+    scored_reflections = [r for r in all_reflections if r['score'] > 0]
+    avg_score = np.mean([r['score'] for r in scored_reflections]) if scored_reflections else 0
     
     # 计算提交率
     students_with_submissions = len(set([r['student_username'] for r in all_reflections]))
@@ -387,6 +428,7 @@ def get_class_stats():
         'total_students': total_students,
         'pending_count': pending_count,
         'reviewed_count': reviewed_count,
+        'returned_count': returned_count,
         'avg_score': round(avg_score, 1),
         'submission_rate': submission_rate
     }
@@ -422,7 +464,7 @@ def generate_sample_data():
     
     data = []
     for i in range(30):
-        date = datetime.now() - timedelta(days=29-i)
+        date = get_beijing_time() - timedelta(days=29-i)
         topic = np.random.choice(topics)
         ideology = np.random.choice(ideologies)
         duration = round(np.random.uniform(0.5, 4.0), 1)
@@ -568,6 +610,10 @@ def render_sidebar():
             st.switch_page("main.py")
         if st.button("🔬 图像处理实验室", use_container_width=True):
             st.switch_page("pages/1_🔬_图像处理实验室.py")
+        if st.button("🏫加入班级与在线签到", use_container_width=True):
+            st.switch_page("pages/分班和在线签到.py")
+        if st.button("📤 实验作业提交", use_container_width=True):
+            st.switch_page("pages/实验作业提交.py")
         if st.button("📚 学习资源中心", use_container_width=True):
             st.switch_page("pages/2_📚_学习资源中心.py")
         if st.button("📝 我的思政足迹", use_container_width=True):
@@ -589,6 +635,8 @@ def render_sidebar():
             
             st.markdown(f"**待审核:** {stats['pending_count']}")
             st.markdown(f"**已审核:** {stats['reviewed_count']}")
+            if stats['returned_count'] > 0:
+                st.markdown(f"**已退回:** {stats['returned_count']}")
         
         # 教师端统计
         elif st.session_state.get('logged_in') and st.session_state.get('role') == 'teacher':
@@ -634,7 +682,8 @@ def render_sidebar():
         # 系统信息
         st.markdown("---")
         st.markdown("**📊 系统信息**")
-        st.text(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        current_time = get_beijing_time().strftime('%Y-%m-%d %H:%M')
+        st.text(f"时间: {current_time}")
         st.text("状态: 🟢 正常运行")
         st.text("版本: v2.1.0")
 
@@ -706,66 +755,57 @@ def render_history_records():
         # 显示数据库记录
         for record in records:
             with st.container():
-                # 状态标签
-                status_badge = ""
-                if record['status'] == 'pending':
-                    status_badge = '<span class="status-pending">⏳ 待审核</span>'
-                elif record['status'] == 'reviewed':
-                    status_badge = '<span class="status-reviewed">✅ 已审核</span>'
-                elif record['status'] == 'returned':
-                    status_badge = '<span class="status-returned">↩️ 已退回</span>'
-                
-                # 分数显示
-                score_display = ""
-                if record['score'] > 0:
-                    if st.session_state.get('role') == 'student' and record['allow_view_score']:
-                        score_display = f" | <strong>⭐ 分数:</strong> {record['score']}分"
-                    elif st.session_state.get('role') == 'teacher':
-                        score_display = f" | <strong>⭐ 分数:</strong> {record['score']}分"
-                    elif st.session_state.get('role') == 'student' and not record['allow_view_score']:
-                        score_display = " | <strong>⭐ 分数:</strong> 教师设置不可见"
-                
-                # 字数状态
-                word_status = "✅" if record['word_count'] >= 60 else "⚠️"
-                
-                st.markdown(f"""
-                <div class='record-item'>
-                    <div style='display: flex; justify-content: space-between; align-items: start;'>
-                        <div style='flex: 1;'>
-                            <h4>📝 思政感悟记录</h4>
-                            <p><strong>📅 提交时间：</strong>{record['submission_time']} | 
-                               {status_badge}{score_display}</p>
-                            <p><strong>📊 字数：</strong>{word_status} {record['word_count']}字</p>
-                            {f"<p><strong>👤 学生：</strong>{record['student_username']}</p>" if st.session_state.get('role') == 'teacher' else ""}
-                        </div>
-                    </div>
-                    <div style='margin-top: 15px;'>
-                        <p><strong>💭 感悟内容：</strong>{record['reflection_content'][:150]}...</p>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # 操作按钮
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    if st.button("👁️ 查看详情", key=f"view_db_{record['id']}", use_container_width=True):
-                        st.session_state.view_record_id = record
-                        st.rerun()
-                with col2:
-                    if st.session_state.get('role') == 'teacher':
-                        if st.button("📝 审核评分", key=f"review_db_{record['id']}", use_container_width=True):
-                            st.session_state.edit_record_id = record
+                # 使用Streamlit原生组件代替HTML
+                with st.container():
+                    st.markdown(f"### 👤 {record['student_username']} 的感悟")
+                    
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.markdown(f"**📅 提交时间：** {record['submission_time']}")
+                        st.markdown(f"**📊 字数：** {record['word_count']}字")
+                    with col2:
+                        # 显示状态徽章
+                        if record['status'] == 'pending':
+                            st.markdown('<span class="status-pending">⏳ 待审核</span>', unsafe_allow_html=True)
+                        elif record['status'] == 'reviewed':
+                            st.markdown('<span class="status-reviewed">✅ 已审核</span>', unsafe_allow_html=True)
+                        elif record['status'] == 'returned':
+                            st.markdown('<span class="status-returned">↩️ 已退回</span>', unsafe_allow_html=True)
+                    
+                    # 显示分数（如果已评分）
+                    if record['score'] > 0:
+                        if st.session_state.get('role') == 'student' and record['allow_view_score']:
+                            st.markdown(f"**⭐ 分数：** {record['score']}分")
+                        elif st.session_state.get('role') == 'teacher':
+                            st.markdown(f"**⭐ 分数：** {record['score']}分")
+                        elif st.session_state.get('role') == 'student' and not record['allow_view_score']:
+                            st.markdown("**⭐ 分数：** 教师设置不可见")
+                    
+                    st.markdown(f"**💭 感悟内容：** {record['reflection_content'][:150]}...")
+                    st.markdown("---")
+
+                    
+                    # 操作按钮
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    with col1:
+                        if st.button("👁️ 查看详情", key=f"view_db_{record['id']}", use_container_width=True):
+                            st.session_state.view_record_id = record
                             st.rerun()
-                    elif st.session_state.get('role') == 'student' and record['status'] == 'pending':
-                        if st.button("🗑️ 撤回", key=f"delete_db_{record['id']}", use_container_width=True):
-                            delete_reflection(record['id'])
-                            st.success("✅ 记录已成功撤回！")
-                            st.rerun()
-                with col3:
-                    if record['status'] == 'returned' and record['teacher_feedback']:
-                        st.info(f"教师反馈: {record['teacher_feedback']}")
-                
-                st.markdown("---")
+                    with col2:
+                        if st.session_state.get('role') == 'teacher':
+                            if st.button("📝 审核评分", key=f"review_db_{record['id']}", use_container_width=True):
+                                st.session_state.edit_record_id = record
+                                st.rerun()
+                        elif st.session_state.get('role') == 'student' and record['status'] == 'pending':
+                            if st.button("🗑️ 撤回", key=f"delete_db_{record['id']}", use_container_width=True):
+                                delete_reflection(record['id'])
+                                st.success("✅ 记录已成功撤回！")
+                                st.rerun()
+                    with col3:
+                        if record['status'] == 'returned' and record['teacher_feedback']:
+                            st.info(f"教师反馈: {record['teacher_feedback']}")
+                    
+                    st.markdown("---")
         
         # 显示本地记录（仅学生端，兼容旧版本）
         if st.session_state.get('role') == 'student' and st.session_state.learning_records:
@@ -832,20 +872,30 @@ def render_achievements():
     
     with col1:
         if st.session_state.get('role') == 'student':
-            st.markdown("""
+            stats = get_student_stats(st.session_state.username)
+            st.markdown(f"""
             <div class='footprint-card'>
                 <h3>🎯 学习里程碑</h3>
                 <div style='margin: 20px 0;'>
                     <div style='display: flex; justify-content: space-between; margin: 10px 0;'>
-                        <span>🔮 累计学习目标</span>
-                        <span style='color: var(--primary-red); font-weight: bold;'>86/100小时</span>
+                        <span>🔮 累计提交目标</span>
+                        <span style='color: var(--primary-red); font-weight: bold;'>{stats['total_reflections']}/10篇</span>
                     </div>
                     <div style='background: #f1f5f9; border-radius: 10px; height: 10px;'>
                         <div style='background: linear-gradient(135deg, var(--primary-red), var(--accent-red)); 
-                                    height: 100%; width: 86%; border-radius: 10px;'></div>
+                                    height: 100%; width: {min(stats['total_reflections'] * 10, 100)}%; border-radius: 10px;'></div>
                     </div>
                 </div>
-                
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;'>
+                    <div style='text-align: center;'>
+                        <h4 style='color: var(--primary-red); margin: 0;'>{stats['total_reflections']}</h4>
+                        <p style='margin: 0; font-size: 0.8rem;'>总提交</p>
+                    </div>
+                    <div style='text-align: center;'>
+                        <h4 style='color: var(--primary-red); margin: 0;'>{stats['avg_score']}</h4>
+                        <p style='margin: 0; font-size: 0.8rem;'>平均分</p>
+                    </div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
         else:  # 教师端
@@ -863,7 +913,16 @@ def render_achievements():
                                     height: 100%; width: {class_stats['submission_rate']}%; border-radius: 10px;'></div>
                     </div>
                 </div>
-                
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;'>
+                    <div style='text-align: center;'>
+                        <h4 style='color: var(--primary-red); margin: 0;'>{class_stats['total_reflections']}</h4>
+                        <p style='margin: 0; font-size: 0.8rem;'>总提交</p>
+                    </div>
+                    <div style='text-align: center;'>
+                        <h4 style='color: var(--primary-red); margin: 0;'>{class_stats['avg_score']}</h4>
+                        <p style='margin: 0; font-size: 0.8rem;'>平均分</p>
+                    </div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -928,7 +987,7 @@ def render_achievements():
 # 学生端界面
 def render_student_interface():
     """渲染学生端界面"""
-    # 学习统计
+    # 学习统计 - 使用修复后的统计数据
     stats = get_student_stats(st.session_state.username)
     
     col1, col2, col3, col4 = st.columns(4)
@@ -951,7 +1010,7 @@ def render_student_interface():
             col1, col2 = st.columns(2)
             
             with col1:
-                date = st.date_input("📅 学习日期", datetime.now())
+                date = st.date_input("📅 学习日期", get_beijing_time().date())
                 topic = st.text_input("🎯 学习主题", placeholder="例如：图像边缘检测技术与工匠精神")
                 learning_type = st.selectbox(
                     "📖 学习类型",
@@ -1017,7 +1076,7 @@ def render_student_interface():
                             'satisfaction': satisfaction,
                             'reflection': reflection,
                             'tech_gains': tech_gains,
-                            'timestamp': datetime.now()
+                            'timestamp': get_beijing_time()
                         }
                         st.session_state.learning_records.append(new_record)
                         
@@ -1038,7 +1097,7 @@ def render_student_interface():
 # 教师端界面
 def render_teacher_interface():
     """渲染教师端界面"""
-    # 班级统计概览
+    # 班级统计概览 - 使用修复后的统计数据
     class_stats = get_class_stats()
     
     col1, col2, col3, col4 = st.columns(4)
@@ -1122,38 +1181,29 @@ def render_teacher_interface():
             
             for record in filtered_records:
                 with st.container():
-                    # 状态标签
-                    status_badge = ""
-                    if record['status'] == 'pending':
-                        status_badge = '<span class="status-pending">⏳ 待审核</span>'
-                    elif record['status'] == 'reviewed':
-                        status_badge = '<span class="status-reviewed">✅ 已审核</span>'
-                    elif record['status'] == 'returned':
-                        status_badge = '<span class="status-returned">↩️ 已退回</span>'
-                    
-                    # 分数显示
-                    score_display = ""
-                    if record['score'] > 0:
-                        score_display = f" | <strong>⭐ 分数:</strong> {record['score']}分"
-                    
-                    # 字数状态
-                    word_status = "✅ 符合" if record['word_count'] >= 60 else "⚠️ 不足"
-                    
-                    st.markdown(f"""
-                    <div class='record-item'>
-                        <div style='display: flex; justify-content: space-between; align-items: start;'>
-                            <div style='flex: 1;'>
-                                <h4>👤 {record['student_username']} 的感悟</h4>
-                                <p><strong>📅 提交时间：</strong>{record['submission_time']} | 
-                                   {status_badge}{score_display}</p>
-                                <p><strong>📊 字数：</strong>{record['word_count']}字 ({word_status})</p>
-                            </div>
-                        </div>
-                        <div style='margin-top: 15px;'>
-                            <p><strong>💭 感悟内容：</strong>{record['reflection_content'][:150]}...</p>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # 使用Streamlit原生组件代替HTML
+                    with st.container():
+                        st.markdown(f"### 👤 {record['student_username']} 的感悟")
+                        
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.markdown(f"**📅 提交时间：** {record['submission_time']}")
+                            st.markdown(f"**📊 字数：** {record['word_count']}字")
+                        with col2:
+                            # 显示状态徽章
+                            if record['status'] == 'pending':
+                                st.markdown('<span class="status-pending">⏳ 待审核</span>', unsafe_allow_html=True)
+                            elif record['status'] == 'reviewed':
+                                st.markdown('<span class="status-reviewed">✅ 已审核</span>', unsafe_allow_html=True)
+                            elif record['status'] == 'returned':
+                                st.markdown('<span class="status-returned">↩️ 已退回</span>', unsafe_allow_html=True)
+                        
+                        # 显示分数（如果已评分）
+                        if record['score'] > 0:
+                            st.markdown(f"**⭐ 分数：** {record['score']}分")
+                        
+                        st.markdown(f"**💭 感悟内容：** {record['reflection_content'][:150]}...")
+                        st.markdown("---")
                     
                     # 操作按钮
                     col1, col2, col3 = st.columns([1, 1, 1])
@@ -1185,11 +1235,13 @@ def render_teacher_interface():
     with tab5:
         st.markdown('<div class="section-title">🎯 班级统计概览</div>', unsafe_allow_html=True)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("⏳ 待审核", class_stats['pending_count'])
         with col2:
             st.metric("✅ 已审核", class_stats['reviewed_count'])
+        with col3:
+            st.metric("↩️ 已退回", class_stats['returned_count'])
         
         # 学生提交情况统计
         st.markdown("### 📊 学生提交情况")
@@ -1227,7 +1279,7 @@ def main():
         if st.button("前往登录"):
             st.switch_page("main.py")
         return
-    
+    init_database()
     # 应用CSS样式
     apply_modern_css()
     

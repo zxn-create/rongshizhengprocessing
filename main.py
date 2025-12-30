@@ -7,6 +7,12 @@ import plotly.graph_objects as go
 import sqlite3
 import bcrypt
 import time
+import os
+import base64
+import json
+import requests
+from pathlib import Path
+
 # 页面配置
 st.set_page_config(
     page_title="融思政 - 数字图像处理实验平台",
@@ -15,10 +21,212 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 数据库核心功能
+# ==================== GitHub配置 ====================
+GITHUB_USERNAME = "zxn-create"
+GITHUB_REPO = "rongszdigitalimagep"
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # 从Streamlit Secrets获取
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
+
+# ==================== GitHub API工具函数 ====================
+def github_upload_file(file_path, content, message="Upload file via Streamlit"):
+    """上传文件到GitHub仓库"""
+    try:
+        # 检查GitHub Token是否配置
+        if not GITHUB_TOKEN:
+            st.warning("GitHub Token未配置，文件将仅保存到本地")
+            return False
+        
+        # 准备API请求
+        url = f"{GITHUB_API_URL}/{file_path}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # 检查文件是否已存在
+        response = requests.get(url, headers=headers)
+        
+        # 准备数据
+        data = {
+            "message": message,
+            "content": base64.b64encode(content).decode('utf-8')
+        }
+        
+        # 如果文件已存在，添加SHA
+        if response.status_code == 200:
+            existing_file = response.json()
+            data["sha"] = existing_file["sha"]
+        
+        # 上传文件
+        response = requests.put(url, headers=headers, json=data)
+        
+        if response.status_code in [200, 201]:
+            print(f"✅ 文件已同步到GitHub: {file_path}")
+            return True
+        else:
+            print(f"❌ GitHub上传失败: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ GitHub上传异常: {str(e)}")
+        return False
+
+def github_upload_data(data_type, data_content, username, experiment_info=None):
+    """上传结构化数据到GitHub"""
+    try:
+        # 创建时间戳
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 根据数据类型确定路径
+        if data_type == "experiment":
+            experiment_num = experiment_info.get("experiment_number", "unknown")
+            file_name = f"experiment_{experiment_num}_{username}_{timestamp}.json"
+            file_path = f"data/experiments/{file_name}"
+        elif data_type == "reflection":
+            file_name = f"reflection_{username}_{timestamp}.json"
+            file_path = f"data/reflections/{file_name}"
+        elif data_type == "user":
+            file_name = f"user_{username}_{timestamp}.json"
+            file_path = f"data/users/{file_name}"
+        else:
+            file_name = f"{data_type}_{username}_{timestamp}.json"
+            file_path = f"data/misc/{file_name}"
+        
+        # 确保目录存在（在GitHub上）
+        ensure_github_directory(os.path.dirname(file_path))
+        
+        # 准备数据
+        data = {
+            "type": data_type,
+            "username": username,
+            "timestamp": timestamp,
+            "content": data_content,
+            "experiment_info": experiment_info
+        }
+        
+        # 转换为JSON并上传
+        json_content = json.dumps(data, ensure_ascii=False, indent=2)
+        success = github_upload_file(
+            file_path, 
+            json_content.encode('utf-8'),
+            message=f"Upload {data_type} data for {username}"
+        )
+        
+        return success
+        
+    except Exception as e:
+        print(f"❌ 数据上传到GitHub失败: {str(e)}")
+        return False
+
+def ensure_github_directory(directory_path):
+    """确保GitHub目录存在（创建README文件来创建目录）"""
+    try:
+        if not GITHUB_TOKEN:
+            return False
+            
+        # GitHub API只能通过创建文件来创建目录
+        readme_path = f"{directory_path}/README.md"
+        readme_content = f"# {directory_path}\n\n此目录用于存储平台数据。\n\n创建时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # 检查README是否已存在
+        url = f"{GITHUB_API_URL}/{readme_path}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        # 如果不存在，创建README
+        if response.status_code == 404:
+            data = {
+                "message": f"Create directory: {directory_path}",
+                "content": base64.b64encode(readme_content.encode('utf-8')).decode('utf-8')
+            }
+            response = requests.put(url, headers=headers, json=data)
+            
+            if response.status_code in [200, 201]:
+                print(f"✅ 创建GitHub目录: {directory_path}")
+                return True
+            else:
+                print(f"❌ 创建目录失败: {response.status_code}")
+                return False
+                
+        return True
+        
+    except Exception as e:
+        print(f"❌ 确保GitHub目录失败: {str(e)}")
+        return False
+
+def save_file_to_github_and_local(uploaded_file, subdirectory="uploads"):
+    """保存文件到本地并同步到GitHub"""
+    try:
+        # 创建本地目录
+        local_dir = f"data/{subdirectory}"
+        os.makedirs(local_dir, exist_ok=True)
+        
+        # 生成唯一文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_ext = os.path.splitext(uploaded_file.name)[1]
+        file_name = f"{timestamp}_{uploaded_file.name}"
+        local_path = os.path.join(local_dir, file_name)
+        github_path = f"data/{subdirectory}/{file_name}"
+        
+        # 保存到本地
+        with open(local_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        print(f"✅ 文件已保存到本地: {local_path}")
+        
+        # 同步到GitHub
+        file_content = uploaded_file.getvalue()
+        github_success = github_upload_file(
+            github_path,
+            file_content,
+            message=f"Upload {uploaded_file.name} via Streamlit"
+        )
+        
+        if github_success:
+            print(f"✅ 文件已同步到GitHub: {github_path}")
+        else:
+            print(f"⚠️ 文件未同步到GitHub，仅保存在本地")
+        
+        return {
+            "success": True,
+            "local_path": local_path,
+            "github_path": github_path,
+            "github_success": github_success,
+            "file_name": file_name
+        }
+        
+    except Exception as e:
+        print(f"❌ 文件保存失败: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# ==================== 数据库路径配置 ====================
+# 使用持久化的数据库路径（在 Streamlit Cloud 上使用 /tmp 目录）
+def get_db_path():
+    """获取数据库文件路径，确保持久化"""
+    # 在本地开发环境
+    if os.path.exists('.'):
+        return 'image_processing_platform.db'
+    # 在 Streamlit Cloud 上使用持久化路径
+    else:
+        # 创建数据目录
+        data_dir = '/tmp/rongsz_data'
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        return os.path.join(data_dir, 'image_processing_platform.db')
+
+DB_PATH = get_db_path()
+
+# ==================== 数据库核心功能 ====================
 def init_db():
     """初始化数据库，创建用户表和实验提交表"""
-    conn = sqlite3.connect('image_processing_platform.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     # 创建用户表（包含角色字段）
     c.execute(''' 
@@ -45,6 +253,11 @@ def init_db():
             score INTEGER DEFAULT 0,
             resubmission_count INTEGER DEFAULT 0,
             allow_view_score BOOLEAN DEFAULT TRUE,
+            # 新增字段：文件信息
+            file_path TEXT DEFAULT '',
+            file_name TEXT DEFAULT '',
+            github_sync BOOLEAN DEFAULT FALSE,
+            github_path TEXT DEFAULT '',
             FOREIGN KEY (student_username) REFERENCES users (username)
         )
     ''')
@@ -61,6 +274,11 @@ def init_db():
             score INTEGER DEFAULT 0,
             word_count INTEGER DEFAULT 0,
             allow_view_score BOOLEAN DEFAULT TRUE,
+            # 新增字段：文件信息
+            file_path TEXT DEFAULT '',
+            file_name TEXT DEFAULT '',
+            github_sync BOOLEAN DEFAULT FALSE,
+            github_path TEXT DEFAULT '',
             FOREIGN KEY (student_username) REFERENCES users (username)
         )
     ''')
@@ -93,7 +311,7 @@ def create_default_teachers():
         {"username": "yhh4", "password": "23123yhh", "role": "teacher"}
     ]
     
-    conn = sqlite3.connect('image_processing_platform.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     for teacher in default_teachers:
@@ -110,6 +328,15 @@ def create_default_teachers():
                     (teacher["username"], hashed_password.decode('utf-8'), teacher["role"], create_time)
                 )
                 print(f"创建教师账号: {teacher['username']}")
+                
+                # 同步到GitHub
+                user_data = {
+                    "username": teacher["username"],
+                    "role": teacher["role"],
+                    "create_time": create_time
+                }
+                github_upload_data("user", user_data, teacher["username"])
+                
         except Exception as e:
             print(f"创建教师账号 {teacher['username']} 失败: {str(e)}")
     
@@ -119,18 +346,27 @@ def create_default_teachers():
 def add_user(username, password, role):
     """添加新用户（密码哈希存储）"""
     try:
-        conn = sqlite3.connect('image_processing_platform.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         # 密码哈希处理（加盐）
         salt = bcrypt.gensalt()
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
         create_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        c.execute( 
+        c.execute(
             "INSERT INTO users (username, password, role, create_time) VALUES (?, ?, ?, ?)", 
-            (username, hashed_password.decode('utf-8'), role, create_time) 
+            (username, hashed_password.decode('utf-8'), role, create_time)
         )
         conn.commit()
         conn.close()
+        
+        # 同步到GitHub
+        user_data = {
+            "username": username,
+            "role": role,
+            "create_time": create_time
+        }
+        github_upload_data("user", user_data, username)
+        
         return True, "注册成功！"
     except sqlite3.IntegrityError:
         return False, "用户名已存在！"
@@ -140,7 +376,7 @@ def add_user(username, password, role):
 def verify_user(username, password):
     """验证用户登录（匹配哈希密码）"""
     try:
-        conn = sqlite3.connect('image_processing_platform.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT password, role FROM users WHERE username = ?", (username,))
         result = c.fetchone()
@@ -155,10 +391,164 @@ def verify_user(username, password):
         st.error(f"登录验证失败：{str(e)}")
         return False, None
 
+def change_password(username, old_password, new_password):
+    """修改用户密码"""
+    try:
+        # 首先验证旧密码
+        success, role = verify_user(username, old_password)
+        if not success:
+            return False, "旧密码错误"
+        
+        # 更新为新密码
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # 对新密码进行哈希处理
+        salt = bcrypt.gensalt()
+        hashed_new_password = bcrypt.hashpw(new_password.encode('utf-8'), salt)
+        
+        # 更新密码
+        c.execute(
+            "UPDATE users SET password = ? WHERE username = ?",
+            (hashed_new_password.decode('utf-8'), username)
+        )
+        
+        conn.commit()
+        conn.close()
+        
+        # 同步到GitHub
+        password_data = {
+            "username": username,
+            "password_changed": True,
+            "change_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        github_upload_data("password_change", password_data, username)
+        
+        return True, "密码修改成功！"
+    except Exception as e:
+        return False, f"修改密码失败：{str(e)}"
+
+def submit_experiment_with_file(username, experiment_number, experiment_title, submission_content, uploaded_file=None):
+    """提交实验作业（包含文件上传）"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        submission_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 初始化文件信息
+        file_path = ""
+        file_name = ""
+        github_sync = False
+        github_path = ""
+        
+        # 如果有上传的文件
+        if uploaded_file is not None:
+            # 保存文件到本地和GitHub
+            file_result = save_file_to_github_and_local(uploaded_file, subdirectory=f"experiments/{experiment_number}")
+            
+            if file_result["success"]:
+                file_path = file_result["local_path"]
+                file_name = file_result["file_name"]
+                github_sync = file_result["github_success"]
+                github_path = file_result["github_path"]
+            else:
+                print(f"文件保存失败: {file_result.get('error', '未知错误')}")
+        
+        # 插入数据库
+        c.execute('''
+            INSERT INTO experiment_submissions 
+            (student_username, experiment_number, experiment_title, submission_content, 
+             submission_time, file_path, file_name, github_sync, github_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (username, experiment_number, experiment_title, submission_content,
+              submission_time, file_path, file_name, github_sync, github_path))
+        
+        conn.commit()
+        conn.close()
+        
+        # 同步到GitHub
+        experiment_data = {
+            "student_username": username,
+            "experiment_number": experiment_number,
+            "experiment_title": experiment_title,
+            "submission_content": submission_content,
+            "submission_time": submission_time,
+            "file_info": {
+                "file_name": file_name,
+                "github_sync": github_sync,
+                "github_path": github_path
+            }
+        }
+        github_upload_data("experiment", experiment_data, username, 
+                          {"experiment_number": experiment_number})
+        
+        return True, "实验作业提交成功！"
+    except Exception as e:
+        return False, f"提交失败：{str(e)}"
+
+def submit_reflection_with_file(username, reflection_content, uploaded_file=None):
+    """提交思政感悟（包含文件上传）"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        submission_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        word_count = len(reflection_content.strip().split())
+        
+        # 初始化文件信息
+        file_path = ""
+        file_name = ""
+        github_sync = False
+        github_path = ""
+        
+        # 如果有上传的文件
+        if uploaded_file is not None:
+            # 保存文件到本地和GitHub
+            file_result = save_file_to_github_and_local(uploaded_file, subdirectory="reflections")
+            
+            if file_result["success"]:
+                file_path = file_result["local_path"]
+                file_name = file_result["file_name"]
+                github_sync = file_result["github_success"]
+                github_path = file_result["github_path"]
+            else:
+                print(f"文件保存失败: {file_result.get('error', '未知错误')}")
+        
+        # 插入数据库
+        c.execute('''
+            INSERT INTO ideology_reflections 
+            (student_username, reflection_content, submission_time, word_count,
+             file_path, file_name, github_sync, github_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (username, reflection_content, submission_time, word_count,
+              file_path, file_name, github_sync, github_path))
+        
+        conn.commit()
+        conn.close()
+        
+        # 同步到GitHub
+        reflection_data = {
+            "student_username": username,
+            "reflection_content": reflection_content,
+            "submission_time": submission_time,
+            "word_count": word_count,
+            "file_info": {
+                "file_name": file_name,
+                "github_sync": github_sync,
+                "github_path": github_path
+            }
+        }
+        github_upload_data("reflection", reflection_data, username)
+        
+        return True, "思政感悟提交成功！"
+    except Exception as e:
+        return False, f"提交失败：{str(e)}"
+
 def get_user_stats():
     """获取用户统计数据"""
     try:
-        conn = sqlite3.connect('image_processing_platform.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
         # 获取总用户数
@@ -189,10 +579,107 @@ def get_user_stats():
         print(f"获取统计数据失败: {str(e)}")
         return {'total_users': 0, 'student_count': 0, 'experiment_count': 0, 'reflection_count': 0}
 
-# 初始化数据库（首次运行自动创建）
-init_db()
+def get_experiment_stats():
+    """获取实验作业统计数据（仅教师端使用）"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # 获取总提交数
+        c.execute("SELECT COUNT(*) FROM experiment_submissions")
+        total_submissions = c.fetchone()[0]
+        
+        # 获取待批改数（status为'pending'）
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE status = 'pending'")
+        pending_count = c.fetchone()[0]
+        
+        # 获取已评分数（status为'graded'）
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE status = 'graded'")
+        graded_count = c.fetchone()[0]
+        
+        # 获取平均分
+        c.execute("SELECT AVG(score) FROM experiment_submissions WHERE score > 0")
+        avg_score_result = c.fetchone()[0]
+        avg_score = round(avg_score_result, 1) if avg_score_result else 0
+        
+        # 获取GitHub同步统计
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE github_sync = TRUE")
+        github_sync_count = c.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_submissions': total_submissions,
+            'pending_count': pending_count,
+            'graded_count': graded_count,
+            'avg_score': avg_score,
+            'github_sync_count': github_sync_count
+        }
+    except Exception as e:
+        print(f"获取作业统计数据失败: {str(e)}")
+        return {
+            'total_submissions': 0,
+            'pending_count': 0,
+            'graded_count': 0,
+            'avg_score': 0,
+            'github_sync_count': 0
+        }
 
-# 现代化米色思政主题CSS
+def get_submission_by_username(username):
+    """获取指定用户的提交情况"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # 获取用户提交总数
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE student_username = ?", (username,))
+        user_total = c.fetchone()[0]
+        
+        # 获取用户已评分数
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE student_username = ? AND status = 'graded'", (username,))
+        user_graded = c.fetchone()[0]
+        
+        # 获取用户待批改数
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE student_username = ? AND status = 'pending'", (username,))
+        user_pending = c.fetchone()[0]
+        
+        # 获取用户平均分
+        c.execute("SELECT AVG(score) FROM experiment_submissions WHERE student_username = ? AND score > 0", (username,))
+        avg_score_result = c.fetchone()[0]
+        user_avg_score = round(avg_score_result, 1) if avg_score_result else 0
+        
+        # 获取GitHub同步数量
+        c.execute("SELECT COUNT(*) FROM experiment_submissions WHERE student_username = ? AND github_sync = TRUE", (username,))
+        github_sync_count = c.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'user_total': user_total,
+            'user_graded': user_graded,
+            'user_pending': user_pending,
+            'user_avg_score': user_avg_score,
+            'github_sync_count': github_sync_count
+        }
+    except Exception as e:
+        print(f"获取用户提交情况失败: {str(e)}")
+        return {
+            'user_total': 0,
+            'user_graded': 0,
+            'user_pending': 0,
+            'user_avg_score': 0,
+            'github_sync_count': 0
+        }
+
+# ==================== 初始化数据库 ====================
+# 检查数据库是否存在，如果不存在则初始化
+if not os.path.exists(DB_PATH):
+    print(f"数据库不存在，正在初始化数据库到路径: {DB_PATH}")
+    init_db()
+else:
+    print(f"数据库已存在: {DB_PATH}")
+
+# ==================== 现代化米色思政主题CSS ====================
 def apply_modern_css():
     st.markdown("""
     <style>
@@ -349,6 +836,11 @@ def apply_modern_css():
     .modern-nav-card.achievement {
         background: linear-gradient(135deg, #fff, var(--beige-light));
         border-top: 4px solid var(--dark-red);
+    }
+    
+    .modern-nav-card.submission {
+        background: linear-gradient(135deg, #fff, var(--beige-light));
+        border-top: 4px solid #10b981;
     }
     
     .nav-icon {
@@ -604,6 +1096,31 @@ def apply_modern_css():
         background: transparent !important;
     }
     
+    /* GitHub同步状态样式 */
+    .github-sync-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    
+    .github-sync-success {
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+    }
+    
+    .github-sync-failed {
+        background: linear-gradient(135deg, #ef4444, #dc2626);
+        color: white;
+    }
+    
+    .github-sync-local {
+        background: linear-gradient(135deg, #6b7280, #4b5563);
+        color: white;
+    }
+    
     /* 响应式设计 */
     @media (max-width: 768px) {
         .modern-scientists-grid {
@@ -669,6 +1186,16 @@ def apply_modern_css():
         margin: 20px 0;
     }
     
+    /* 修改密码对话框样式 */
+    .change-password-dialog {
+        background: white;
+        padding: 30px;
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        border: 2px solid #10b981;
+        margin: 20px 0;
+    }
+    
     /* 角色选择样式 */
     .role-selection {
         display: flex;
@@ -704,6 +1231,30 @@ def apply_modern_css():
         padding: 15px;
         border-radius: 10px;
         border: 2px solid #d4af37;
+        margin: 15px 0;
+    }
+    
+    /* 文件上传区域样式 */
+    .file-upload-area {
+        background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+        border: 2px dashed #10b981;
+        border-radius: 12px;
+        padding: 30px;
+        text-align: center;
+        margin: 20px 0;
+        transition: all 0.3s ease;
+    }
+    
+    .file-upload-area:hover {
+        background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+        border-color: #059669;
+    }
+    
+    .github-info-box {
+        background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+        border: 2px solid #3b82f6;
+        border-radius: 12px;
+        padding: 20px;
         margin: 15px 0;
     }
     </style>
@@ -877,6 +1428,10 @@ def render_sidebar():
             st.switch_page("main.py")
         if st.button("🔬 图像处理实验室", use_container_width=True):
             st.switch_page("pages/1_🔬_图像处理实验室.py")
+        if st.button("🏫加入班级与在线签到", use_container_width=True):
+            st.switch_page("pages/分班和在线签到.py")
+        if st.button("📤 实验作业提交", use_container_width=True):
+            st.switch_page("pages/实验作业提交.py")
         if st.button("📚 学习资源中心", use_container_width=True):
             st.switch_page("pages/2_📚_学习资源中心.py")
         if st.button("📝 我的思政足迹", use_container_width=True):
@@ -884,7 +1439,29 @@ def render_sidebar():
         if st.button("🏆 成果展示", use_container_width=True):
             st.switch_page("pages/4_🏆_成果展示.py")
         
+        # GitHub同步信息
+        st.markdown("---")
+        st.markdown("### 🔄 数据同步")
+        
+        github_status = "🟢 已连接" if GITHUB_TOKEN else "🔴 未配置"
+        st.markdown(f"**GitHub状态:** {github_status}")
+        
+        if GITHUB_TOKEN:
+            st.success("✅ 数据将自动同步到GitHub")
+            st.markdown(f"""
+            <div class='github-info-box'>
+                <p style='color: #3b82f6; font-size: 0.9rem;'>
+                <strong>仓库:</strong> {GITHUB_USERNAME}/{GITHUB_REPO}<br>
+                <strong>同步:</strong> 文件 + 数据<br>
+                <strong>存储:</strong> 永久保存
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ GitHub Token未配置，数据仅保存在本地")
+        
         # 平台特色
+        st.markdown("---")
         st.markdown("""
         <div style='background: linear-gradient(135deg, #fee2e2, #fecaca); padding: 25px; 
                     border-radius: 15px; border-left: 5px solid #dc2626; margin-bottom: 20px;
@@ -895,6 +1472,8 @@ def render_sidebar():
                 <li style='color: #dc2626;'>🇨🇳 思政教育融合</li>
                 <li style='color: #dc2626;'>💡 创新实践平台</li>
                 <li style='color: #dc2626;'>🚀 现代化技术栈</li>
+                <li style='color: #dc2626;'>📤 作业提交系统</li>
+                <li style='color: #dc2626;'>🔄 GitHub同步</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -911,6 +1490,8 @@ def render_sidebar():
                 <li style='color: #dc2626;'>🔬 科学态度</li>
                 <li style='color: #dc2626;'>💡 创新意识</li>
                 <li style='color: #dc2626;'>🇨🇳 家国情怀</li>
+                <li style='color: #dc2626;'>📚 自主学习能力</li>
+                <li style='color: #dc2626;'>🔄 数据安全意识</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -935,7 +1516,9 @@ def render_sidebar():
         st.markdown("**📊 系统信息**")
         st.text(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         st.text("状态: 🟢 正常运行")
-        st.text("版本: v2.1.0")
+        st.text(f"数据库: {os.path.basename(DB_PATH)}")
+        st.text("GitHub: " + ("🟢 已连接" if GITHUB_TOKEN else "🔴 未配置"))
+        st.text("版本: v2.2.0")
         
         # 新增：用户进度
         st.markdown("---")
@@ -955,13 +1538,13 @@ def render_user_area():
     
     with col3:
         if st.session_state.logged_in:
-            # 已登录状态 - 显示用户信息和退出按钮
+            # 已登录状态 - 显示用户信息和功能按钮
             username = st.session_state.username
             role = st.session_state.role
             avatar_text = username[0].upper() if username else "U"
             
-            # 用户信息显示 - 合理布局
-            col_user1, col_user2, col_user3 = st.columns([1, 2, 1.2])
+            # 用户信息显示
+            col_user1, col_user2 = st.columns([1, 3])
             with col_user1:
                 st.markdown(f"""
                 <div style='
@@ -999,8 +1582,20 @@ def render_user_area():
                     <div style='color: #6b7280; font-size: 0.75rem; line-height: 1.2;'>{role}</div>
                 </div>
                 """, unsafe_allow_html=True)
-            with col_user3:
-                # 退出登录按钮 - 合理大小
+            
+            # 功能按钮区域
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                # 修改密码按钮
+                if st.button("🔑 改密", 
+                           key="change_pwd_btn", 
+                           help="修改密码", 
+                           use_container_width=True,
+                           type="secondary"):
+                    st.session_state.show_change_password = True
+                    st.rerun()
+            with col_btn2:
+                # 退出登录按钮
                 if st.button("🚪 退出", 
                            key="logout_btn", 
                            help="退出登录", 
@@ -1010,10 +1605,11 @@ def render_user_area():
                     st.session_state.username = ""
                     st.session_state.role = ""
                     st.session_state.show_login = False
+                    st.session_state.show_change_password = False
                     st.rerun()
                 
         else:
-            # 未登录状态 - 显示登录/注册按钮（合理大小）
+            # 未登录状态 - 显示登录/注册按钮
             if st.button("👤 登录/注册", 
                         key="login_btn", 
                         help="登录/注册", 
@@ -1023,6 +1619,81 @@ def render_user_area():
                 st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)
+
+def render_change_password_dialog():
+    """渲染修改密码对话框"""
+    if st.session_state.get('show_change_password', False):
+        # 使用容器创建对话框效果
+        with st.container():
+            st.markdown("""
+            <div class='change-password-dialog'>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("### 🔑 修改密码")
+            st.info("为了保护您的账户安全，请定期修改密码。")
+            
+            with st.form("change_password_form", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    old_password = st.text_input("🔒 当前密码", 
+                                                type="password", 
+                                                placeholder="请输入当前密码",
+                                                key="old_password")
+                
+                with col2:
+                    new_password = st.text_input("🔐 新密码", 
+                                                type="password", 
+                                                placeholder="请输入新密码",
+                                                key="new_password",
+                                                help="建议使用8位以上包含字母、数字和特殊字符的组合")
+                
+                confirm_password = st.text_input("✅ 确认新密码", 
+                                                type="password", 
+                                                placeholder="请再次输入新密码",
+                                                key="confirm_password")
+                
+                col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+                
+                with col_btn1:
+                    submit_btn = st.form_submit_button("💾 确认修改", 
+                                                      use_container_width=True,
+                                                      type="primary")
+                with col_btn2:
+                    if st.form_submit_button("❌ 取消", 
+                                           use_container_width=True,
+                                           type="secondary"):
+                        st.session_state.show_change_password = False
+                        st.rerun()
+                
+                if submit_btn:
+                    if not old_password or not new_password or not confirm_password:
+                        st.error("⚠️ 请填写所有密码字段")
+                    elif new_password != confirm_password:
+                        st.error("❌ 两次输入的新密码不一致")
+                    elif len(new_password) < 6:
+                        st.error("❌ 新密码长度至少6位")
+                    elif old_password == new_password:
+                        st.error("❌ 新密码不能与旧密码相同")
+                    else:
+                        # 调用修改密码函数
+                        success, message = change_password(
+                            st.session_state.username, 
+                            old_password, 
+                            new_password
+                        )
+                        
+                        if success:
+                            st.success(f"✅ {message}")
+                            st.balloons()
+                            # 等待2秒后关闭对话框
+                            time.sleep(2)
+                            st.session_state.show_change_password = False
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
 
 def render_login_dialog():
     """渲染登录注册对话框"""
@@ -1142,6 +1813,8 @@ def main():
         st.session_state.show_login = False
     if 'selected_role' not in st.session_state:
         st.session_state.selected_role = "student"
+    if 'show_change_password' not in st.session_state:
+        st.session_state.show_change_password = False
     
     # 应用现代化CSS
     apply_modern_css()
@@ -1157,6 +1830,16 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    # 显示GitHub同步状态
+    if GITHUB_TOKEN:
+        st.success("✅ GitHub同步已启用 - 所有数据和文件将永久保存到GitHub仓库")
+    else:
+        st.warning("⚠️ GitHub Token未配置 - 数据仅保存在本地，重启可能丢失")
+        st.info("请在Streamlit Cloud的Secrets中配置GITHUB_TOKEN以实现永久存储")
+    
+    # 修改密码对话框（优先显示）
+    render_change_password_dialog()
+    
     # 登录注册对话框
     render_login_dialog()
     
@@ -1170,16 +1853,17 @@ def main():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("👥 活跃用户", f"{200 + stats['total_users']}", f"+{stats['student_count']}学生")
+        st.metric("👥 活跃用户", f"{stats['total_users']}", f"+{stats['student_count']}学生")
     with col2:
-        st.metric("🔬 实验完成", f"{400 + stats['experiment_count']}", "实时更新")
+        st.metric("🔬 实验完成", f"{stats['experiment_count']}", "实时更新")
     with col3:
-        st.metric("📚 思政感悟", f"{400 + stats['reflection_count']}", "实时更新")
+        st.metric("📚 思政感悟", f"{stats['reflection_count']}", "实时更新")
     with col4:
         st.metric("🏆 优秀作品", "67", "+15%")    
-    # 两栏主要内容
+    
+    # 三栏主要内容（调整为三栏以容纳实验作业提交模块）
     st.markdown("## 🚀 核心功能模块")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         # 图像处理实验室
@@ -1243,6 +1927,72 @@ def main():
             else:
                 st.warning("请先登录")
     
+    with col3:
+        # 新增：实验作业提交
+        st.markdown("""
+        <div class='modern-nav-card submission'>
+            <div class='nav-icon'>📤</div>
+            <h3>实验作业提交</h3>
+            <p>提交实验作业和报告<br>获取教师反馈与评分</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("提交作业", key="submission_btn", use_container_width=True):
+            if st.session_state.logged_in:
+                st.switch_page("pages/实验作业提交.py")
+            else:
+                st.warning("请先登录")
+        
+        # 根据用户角色显示不同的作业状态信息
+        if st.session_state.logged_in:
+            if st.session_state.role == "teacher":
+                # 教师端：显示全局作业状态
+                teacher_stats = get_experiment_stats()
+                st.markdown("""
+                <div style='background: linear-gradient(135deg, #f0fdf4, #dcfce7); 
+                            padding: 25px; border-radius: 15px; margin-top: 20px;
+                            border: 2px solid #10b981;'>
+                    <h4 style='color: #10b981; text-align: center;'>📊 教师工作台</h4>
+                    <p style='color: #065f46; text-align: center; font-size: 0.9rem;'>
+                    📋 总提交: {total_submissions} 份<br>
+                    ⏳ 待批改: {pending_count} 份<br>
+                    ✅ 已批改: {graded_count} 份<br>
+                    ⭐ 平均分: {avg_score} 分<br>
+                    🔄 GitHub同步: {github_sync_count} 份
+                    </p>
+                </div>
+                """.format(
+                    total_submissions=teacher_stats['total_submissions'],
+                    pending_count=teacher_stats['pending_count'],
+                    graded_count=teacher_stats['graded_count'],
+                    avg_score=teacher_stats['avg_score'],
+                    github_sync_count=teacher_stats['github_sync_count']
+                ), unsafe_allow_html=True)
+                
+            elif st.session_state.role == "student":
+                # 学生端：显示个人作业状态
+                student_stats = get_submission_by_username(st.session_state.username)
+                st.markdown("""
+                <div style='background: linear-gradient(135deg, #f0fdf4, #dcfce7); 
+                            padding: 25px; border-radius: 15px; margin-top: 20px;
+                            border: 2px solid #10b981;'>
+                    <h4 style='color: #10b981; text-align: center;'>📊 我的作业</h4>
+                    <p style='color: #065f46; text-align: center; font-size: 0.9rem;'>
+                    📤 已提交: {user_total} 份<br>
+                    ⏳ 待批改: {user_pending} 份<br>
+                    ✅ 已批改: {user_graded} 份<br>
+                    ⭐ 平均分: {user_avg_score} 分<br>
+                    🔄 GitHub同步: {github_sync_count} 份
+                    </p>
+                </div>
+                """.format(
+                    user_total=student_stats['user_total'],
+                    user_pending=student_stats['user_pending'],
+                    user_graded=student_stats['user_graded'],
+                    user_avg_score=student_stats['user_avg_score'],
+                    github_sync_count=student_stats['github_sync_count']
+                ), unsafe_allow_html=True)
+    
     # 思政资源长廊
     st.markdown("---")
     st.markdown("<h2 style='text-align: center; color: #8B0000; margin-bottom: 40px; font-family: SimSun, serif;'>🇨🇳 思政资源长廊</h2>", unsafe_allow_html=True)
@@ -1276,10 +2026,7 @@ def main():
         '>—— 钱学森</div>
     </div>
     """, unsafe_allow_html=True)
-    # 科学家卡片网格 - 横向滚动版
-
-
-
+    
     # 第一行科学家
     st.markdown('<div class="modern-scientists-container">', unsafe_allow_html=True)
     st.markdown('<div class="modern-scientists-row">', unsafe_allow_html=True)
@@ -1391,11 +2138,12 @@ def main():
         """, unsafe_allow_html=True)
 
     st.markdown('</div></div>', unsafe_allow_html=True)
+    
     # 新增：平台特色功能展示
     st.markdown("---")
     st.markdown("<h2 style='text-align: center; color: #8B0000; margin-bottom: 40px; font-family: SimSun, serif;'>✨ 平台特色功能</h2>", unsafe_allow_html=True)
     
-    feature_col1, feature_col2, feature_col3 = st.columns(3)
+    feature_col1, feature_col2, feature_col3, feature_col4 = st.columns(4)
     
     with feature_col1:
         st.markdown("""
@@ -1423,6 +2171,55 @@ def main():
             <p style='color: #6b7280;'>实时追踪学习进度，个性化推荐资源，助力高效学习成长</p>
         </div>
         """, unsafe_allow_html=True)
+    
+    with feature_col4:
+        st.markdown("""
+        <div style='text-align: center; padding: 20px;'>
+            <div style='font-size: 3rem; margin-bottom: 15px;'>🔄</div>
+            <h4 style='color: #dc2626;'>GitHub同步存储</h4>
+            <p style='color: #6b7280;'>所有数据和文件自动同步到GitHub，确保数据永久保存不丢失</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # 新增：GitHub同步说明
+    st.markdown("---")
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #f8fafc, #f1f5f9); 
+                padding: 30px; border-radius: 20px; border: 2px solid #3b82f6;
+                margin-top: 40px;'>
+        <h3 style='color: #3b82f6; text-align: center;'>🔄 GitHub数据同步系统</h3>
+        <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;'>
+            <div style='text-align: center; padding: 15px;'>
+                <div style='font-size: 2.5rem; margin-bottom: 10px;'>📁</div>
+                <h5 style='color: #1e40af;'>文件同步</h5>
+                <p style='color: #4b5563; font-size: 0.9rem;'>上传的实验文件、作业报告等自动保存到GitHub仓库</p>
+            </div>
+            <div style='text-align: center; padding: 15px;'>
+                <div style='font-size: 2.5rem; margin-bottom: 10px;'>📊</div>
+                <h5 style='color: #1e40af;'>数据备份</h5>
+                <p style='color: #4b5563; font-size: 0.9rem;'>用户信息、作业提交记录、评分数据等结构化数据备份</p>
+            </div>
+            <div style='text-align: center; padding: 15px;'>
+                <div style='font-size: 2.5rem; margin-bottom: 10px;'>🔒</div>
+                <h5 style='color: #1e40af;'>永久存储</h5>
+                <p style='color: #4b5563; font-size: 0.9rem;'>即使Streamlit应用重启或不活跃，数据也不会丢失</p>
+            </div>
+            <div style='text-align: center; padding: 15px;'>
+                <div style='font-size: 2.5rem; margin-bottom: 10px;'>📈</div>
+                <h5 style='color: #1e40af;'>版本控制</h5>
+                <p style='color: #4b5563; font-size: 0.9rem;'>GitHub自动记录所有变更，支持版本回溯和历史查询</p>
+            </div>
+        </div>
+        <div style='text-align: center; margin-top: 20px;'>
+            <p style='color: #6b7280; font-size: 0.9rem;'>
+            <strong>仓库地址：</strong> 
+            <a href='https://github.com/zxn-create/rongszdigitalimagep' target='_blank' style='color: #3b82f6;'>
+                https://github.com/zxn-create/rongszdigitalimagep
+            </a>
+            </p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
