@@ -15,6 +15,7 @@ import pandas as pd
 import random
 from scipy import ndimage
 from scipy.signal import convolve2d
+import matplotlib
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
